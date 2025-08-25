@@ -20,8 +20,10 @@ palette = "0.7"
 chrono = { workspace = true }
 uuid = { workspace = true }
 
+futures = "0.3.31"
 opener = { version = "0.7.2", features = ["reveal"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 keyring-lib = "1.0.2"
 lnurl-rs = { workspace = true }
+nostr-sdk = "0.43"

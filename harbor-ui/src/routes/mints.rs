@@ -6,7 +6,7 @@ use iced::widget::{column, row};
 
 use crate::components::{
     InputArgs, SvgIcon, basic_layout, h_button, h_federation_archived, h_federation_item,
-    h_federation_item_preview, h_header, h_input, operation_status_for_id,
+    h_federation_item_preview, h_header, h_input, operation_status_for_id, subtitle, the_spinner,
 };
 use crate::{AddFederationStatus, HarborWallet, Message, PeekStatus};
 
@@ -38,6 +38,9 @@ fn mints_list(harbor: &HarborWallet) -> Element<Message> {
     let add_another_mint_button = h_button("Add Another Mint", SvgIcon::Plus, false)
         .on_press(Message::Navigate(Route::Mints(MintSubroute::Add)));
 
+    let discover_mints_button = h_button("Discover Mints", SvgIcon::Eye, false)
+        .on_press(Message::Navigate(Route::Mints(MintSubroute::Discover)));
+
     // if we have inactive mints, display them
     let column = if harbor.mint_list.iter().filter(|a| !a.active).count() > 0 {
         let archived_header = h_header("Archived Mints", "Mints you've joined and left.");
@@ -45,12 +48,19 @@ fn mints_list(harbor: &HarborWallet) -> Element<Message> {
             header,
             active,
             add_another_mint_button,
+            discover_mints_button,
             archived_header,
             inactive
         ]
         .spacing(48)
     } else {
-        column![header, active, add_another_mint_button].spacing(48)
+        column![
+            header,
+            active,
+            add_another_mint_button,
+            discover_mints_button
+        ]
+        .spacing(48)
     };
 
     basic_layout(column)
@@ -118,12 +128,50 @@ fn mints_add(harbor: &HarborWallet) -> Element<Message> {
     basic_layout(column)
 }
 
+fn mints_discover(harbor: &HarborWallet) -> Element<Message> {
+    let header = h_header("Discover Mints", "Find mints announced on Nostr.");
+
+    let mut list = harbor
+        .discovered_mints
+        .iter()
+        .fold(column![], |column, mint| {
+            let preview = h_federation_item_preview(&mint.item);
+            let add_mint_button = h_button(
+                "Join Mint",
+                SvgIcon::Plus,
+                harbor.add_federation_status == AddFederationStatus::Adding,
+            )
+            .on_press(Message::AddMint(mint.join_str.clone()));
+            column.push(column![preview, add_mint_button].spacing(16))
+        })
+        .spacing(48);
+
+    if harbor.discovered_mints.is_empty() {
+        if harbor.discover_pending.is_empty() {
+            list = column![
+                iced::widget::text("No mints found")
+                    .size(18)
+                    .style(subtitle)
+            ]
+            .spacing(16);
+        } else {
+            list = column![the_spinner()].spacing(16);
+        }
+    }
+
+    basic_layout(column![header, list].spacing(48))
+}
+
 pub fn mints(harbor: &HarborWallet) -> Element<Message> {
     if harbor.mint_list.iter().filter(|f| f.active).count() == 0 {
-        mints_add(harbor)
+        match harbor.active_route {
+            Route::Mints(MintSubroute::Discover) => mints_discover(harbor),
+            _ => mints_add(harbor),
+        }
     } else {
         match harbor.active_route {
             Route::Mints(MintSubroute::Add) => mints_add(harbor),
+            Route::Mints(MintSubroute::Discover) => mints_discover(harbor),
             _ => mints_list(harbor),
         }
     }
