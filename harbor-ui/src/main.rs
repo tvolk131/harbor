@@ -5,6 +5,7 @@ use crate::components::confirm_modal::{BasicModalState, ConfirmModalState};
 use crate::components::focus_input_id;
 use crate::components::{Toast, ToastManager, ToastStatus};
 use crate::config::{Config, write_config};
+use crate::nostr::{CashuAnnouncement, FedimintAnnouncement, discover_mints};
 use components::{MUTINY_GREEN, MUTINY_RED};
 use harbor_client::Bolt11Invoice;
 use harbor_client::bip39::Mnemonic;
@@ -13,6 +14,7 @@ use harbor_client::cdk::mint_url::MintUrl;
 use harbor_client::db_models::MintItem;
 use harbor_client::db_models::transaction_item::TransactionItem;
 use harbor_client::fedimint_core::Amount;
+use harbor_client::fedimint_core::config::FederationId;
 use harbor_client::fedimint_core::core::ModuleKind;
 use harbor_client::fedimint_core::invite_code::InviteCode;
 use harbor_client::lightning_address::parse_lnurl;
@@ -28,8 +30,8 @@ use iced::widget::row;
 use iced::{Color, clipboard};
 use iced::{Element, window};
 use log::{debug, error, info, trace};
-use routes::Route;
-use std::collections::HashMap;
+use routes::{MintSubroute, Route};
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -40,6 +42,7 @@ pub mod components;
 mod config;
 pub mod keyring;
 pub mod lock;
+mod nostr;
 pub mod routes;
 
 // This starts the program. Importantly, it registers the update and view methods, along with a subscription.
@@ -191,6 +194,12 @@ pub enum Message {
     ChangeMint(MintIdentifier),
     Donate,
     SetOnchainReceiveEnabled(bool),
+    MintsDiscovered(
+        (
+            BTreeMap<String, CashuAnnouncement>,
+            BTreeMap<FederationId, FedimintAnnouncement>,
+        ),
+    ),
     // Core messages we get from core
     CoreMessage(CoreUIMsgPacket),
     CancelReceiveGeneration,
@@ -207,6 +216,12 @@ impl Message {
 #[derive(Debug, Clone)]
 pub struct OperationStatus {
     pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DiscoveredMint {
+    pub item: MintItem,
+    pub join_str: String,
 }
 
 #[derive(Default, Debug)]
@@ -259,6 +274,8 @@ pub struct HarborWallet {
     current_peek_id: Option<Uuid>,
     current_add_id: Option<Uuid>,
     current_rejoin_id: Option<MintIdentifier>,
+    discovered_mints: Vec<DiscoveredMint>,
+    discover_pending: HashMap<Uuid, String>,
     // Transfer
     transfer_from_federation_selection: Option<String>,
     transfer_to_federation_selection: Option<String>,
@@ -416,7 +433,6 @@ impl HarborWallet {
             Message::Navigate(route) => {
                 // Hide the add_a_mint_cta as soon as the user navs anywhere
                 self.show_add_a_mint_cta = false;
-
                 match self.active_route {
                     // Reset the seed words state when we leave the settings screen
                     Route::Settings => {
@@ -470,7 +486,25 @@ impl HarborWallet {
                         _ => self.active_route = route,
                     },
                 }
-                Task::none()
+
+                let mut task = Task::none();
+                if route == Route::Mints(MintSubroute::Discover) {
+                    self.discovered_mints.clear();
+                    self.discover_pending.clear();
+                    let network = self.config.network;
+                    task = Task::perform(discover_mints(network), |mints_or| {
+                        if let Ok(mints) = mints_or {
+                            Message::MintsDiscovered(mints)
+                        } else {
+                            Message::AddToast(Toast {
+                                title: "Error".to_string(),
+                                body: Some("Failed to discover mints".to_string()),
+                                status: ToastStatus::Bad,
+                            })
+                        }
+                    });
+                }
+                task
             }
             Message::ReceiveAmountChanged(amount) => {
                 self.receive_amount_str = amount;
@@ -1008,6 +1042,25 @@ impl HarborWallet {
                 self.confirm_modal = None;
                 task
             }
+            Message::MintsDiscovered((cashu_announcements, fedimint_announcements)) => {
+                let tasks: Vec<Task<Message>> = cashu_announcements
+                    .into_iter()
+                    .filter_map(|(mint_pubkey, announcement)| {
+                        if let Ok(code) = InviteCode::from_str(&invite) {
+                            let (id, task) = self.send_from_ui(UICoreMsg::GetFederationInfo(code));
+                            self.discover_pending.insert(id, invite);
+                            Some(task)
+                        } else if let Ok(url) = MintUrl::from_str(&invite) {
+                            let (id, task) = self.send_from_ui(UICoreMsg::GetCashuMintInfo(url));
+                            self.discover_pending.insert(id, invite);
+                            Some(task)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                Task::batch(tasks)
+            }
             Message::SetTorEnabled(enabled) => {
                 // Just send the request to update Tor setting
                 let (_, task) = self.send_from_ui(UICoreMsg::SetTorEnabled(enabled));
@@ -1243,8 +1296,22 @@ impl HarborWallet {
                         active: true,
                     };
 
-                    self.peek_federation_item = Some(item);
-                    self.peek_status = PeekStatus::Idle;
+                    if let Some(op_id) = msg.id {
+                        if let Some(join) = self.discover_pending.remove(&op_id) {
+                            if !self.discovered_mints.iter().any(|m| m.item.id == item.id) {
+                                self.discovered_mints.push(DiscoveredMint {
+                                    item,
+                                    join_str: join,
+                                });
+                            }
+                        } else if self.current_peek_id == Some(op_id) {
+                            self.peek_federation_item = Some(item);
+                            self.peek_status = PeekStatus::Idle;
+                        }
+                    } else {
+                        self.peek_federation_item = Some(item);
+                        self.peek_status = PeekStatus::Idle;
+                    }
                     Task::none()
                 }
                 CoreUIMsg::AddMintSuccess(id) => {

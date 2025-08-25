@@ -36,6 +36,7 @@ pub enum MintSubroute {
     #[default]
     List,
     Add,
+    Discover,
 }
 
 #[derive(Default, PartialEq, Debug, Clone, Copy)]
