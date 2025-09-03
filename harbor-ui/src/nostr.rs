@@ -128,11 +128,13 @@ pub async fn discover_mints(
     ),
     nostr_sdk::client::Error,
 > {
-    let network_str = match network {
-        Network::Bitcoin => "mainnet",
-        Network::Testnet | Network::Testnet4 => "testnet",
-        Network::Signet => "signet",
-        Network::Regtest => "regtest",
+    let network_strs = match network {
+        // Note: NIP-87 specifies that "mainnet" should be used, but currently all
+        // announcements on existing relays use "bitcoin" instead, so we filter for both.
+        Network::Bitcoin => vec!["mainnet", "bitcoin"],
+        Network::Testnet | Network::Testnet4 => vec!["testnet"],
+        Network::Signet => vec!["signet"],
+        Network::Regtest => vec!["regtest"],
         unknown_network => panic!("Unsupported network: {unknown_network}"),
     };
 
@@ -140,23 +142,24 @@ pub async fn discover_mints(
     // We're only going to read from relays, so the keypair
     // isn't ever actually used.
     let client = Client::new(Keys::generate());
+    for relay in HARDCODED_RELAYS {
+        client.add_relay(relay).await?;
+    }
+    client.connect().await;
+    client.wait_for_connection(Duration::from_secs(10)).await;
 
     let nip87_announcement_filter = Filter::new()
         .kinds(vec![
             Kind::from_u16(NIP87_MINT_ANNOUNCEMENT_CASHU_KIND),
             Kind::from_u16(NIP87_MINT_ANNOUNCEMENT_FEDIMINT_KIND),
         ])
-        .custom_tag(SingleLetterTag::lowercase(Alphabet::N), network_str);
+        .custom_tags(SingleLetterTag::lowercase(Alphabet::N), network_strs);
 
     let mut cashu_announcements = Vec::new();
     let mut fedimint_announcements = Vec::new();
 
     for event in client
-        .fetch_events_from(
-            HARDCODED_RELAYS,
-            nip87_announcement_filter,
-            Duration::from_secs(10),
-        )
+        .fetch_events(nip87_announcement_filter, Duration::from_secs(10))
         .await?
     {
         if event.kind == Kind::from_u16(NIP87_MINT_ANNOUNCEMENT_CASHU_KIND) {

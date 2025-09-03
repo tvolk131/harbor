@@ -129,37 +129,39 @@ fn mints_add(harbor: &HarborWallet) -> Element<Message> {
 }
 
 fn mints_discover(harbor: &HarborWallet) -> Element<Message> {
-    let header = h_header("Discover Mints", "Find mints announced on Nostr.");
+    let list = if !harbor.discovered_mints.is_empty() {
+        harbor
+            .discovered_mints
+            .iter()
+            .fold(column![], |column, mint| {
+                let preview = h_federation_item_preview(&mint.item);
+                let add_mint_button = h_button(
+                    "Join Mint",
+                    SvgIcon::Plus,
+                    harbor.add_federation_status == AddFederationStatus::Adding,
+                )
+                .on_press(Message::AddMint(mint.join_str.clone()));
+                column.push(column![preview, add_mint_button].spacing(16))
+            })
+            .spacing(48)
+    } else if !harbor.discover_pending.is_empty() {
+        column![the_spinner()].spacing(16)
+    } else {
+        column![
+            iced::widget::text("No mints found")
+                .size(18)
+                .style(subtitle)
+        ]
+        .spacing(16)
+    };
 
-    let mut list = harbor
-        .discovered_mints
-        .iter()
-        .fold(column![], |column, mint| {
-            let preview = h_federation_item_preview(&mint.item);
-            let add_mint_button = h_button(
-                "Join Mint",
-                SvgIcon::Plus,
-                harbor.add_federation_status == AddFederationStatus::Adding,
-            )
-            .on_press(Message::AddMint(mint.join_str.clone()));
-            column.push(column![preview, add_mint_button].spacing(16))
-        })
-        .spacing(48);
-
-    if harbor.discovered_mints.is_empty() {
-        if harbor.discover_pending.is_empty() {
-            list = column![
-                iced::widget::text("No mints found")
-                    .size(18)
-                    .style(subtitle)
-            ]
-            .spacing(16);
-        } else {
-            list = column![the_spinner()].spacing(16);
-        }
-    }
-
-    basic_layout(column![header, list].spacing(48))
+    basic_layout(
+        column![
+            h_header("Discover Mints", "Find mints announced on Nostr."),
+            list
+        ]
+        .spacing(48),
+    )
 }
 
 pub fn mints(harbor: &HarborWallet) -> Element<Message> {

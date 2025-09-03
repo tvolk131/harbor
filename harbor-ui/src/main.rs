@@ -526,16 +526,15 @@ impl HarborWallet {
                     self.discovered_mints.clear();
                     self.discover_pending.clear();
                     let network = self.config.network;
-                    task = Task::perform(discover_mints(network), |mints_or| {
-                        if let Ok(mints) = mints_or {
-                            Message::MintsDiscovered(mints)
-                        } else {
-                            Message::AddToast(Toast {
+                    task = Task::perform(discover_mints(network), |mints_or| match mints_or {
+                        Ok(mints) => Message::MintsDiscovered(mints),
+                        Err(err) => Message::AddToast({
+                            Toast {
                                 title: "Error".to_string(),
                                 body: Some("Failed to discover mints".to_string()),
                                 status: ToastStatus::Bad,
-                            })
-                        }
+                            }
+                        }),
                     });
                 }
                 task
@@ -1017,23 +1016,34 @@ impl HarborWallet {
                 task
             }
             Message::MintsDiscovered((cashu_announcements, fedimint_announcements)) => {
-                let tasks: Vec<Task<Message>> = cashu_announcements
+                let cashu_tasks: Vec<Task<Message>> = cashu_announcements
                     .into_iter()
                     .filter_map(|(mint_pubkey, announcement)| {
-                        if let Ok(code) = InviteCode::from_str(&invite) {
-                            let (id, task) = self.send_from_ui(UICoreMsg::GetFederationInfo(code));
-                            self.discover_pending.insert(id, invite);
-                            Some(task)
-                        } else if let Ok(url) = MintUrl::from_str(&invite) {
+                        if let Ok(url) = MintUrl::from_str(&announcement.url) {
                             let (id, task) = self.send_from_ui(UICoreMsg::GetCashuMintInfo(url));
-                            self.discover_pending.insert(id, invite);
+                            self.discover_pending.insert(id, mint_pubkey);
                             Some(task)
                         } else {
                             None
                         }
                     })
                     .collect();
-                Task::batch(tasks)
+
+                let fedimint_tasks: Vec<Task<Message>> = fedimint_announcements
+                    .into_iter()
+                    .filter_map(|(federation_id, announcement)| {
+                        if let Some(invite_code) = announcement.invite_codes.first() {
+                            let (id, task) = self
+                                .send_from_ui(UICoreMsg::GetFederationInfo(invite_code.clone()));
+                            self.discover_pending.insert(id, federation_id.to_string());
+                            Some(task)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                Task::batch(cashu_tasks.into_iter().chain(fedimint_tasks))
             }
             Message::SetTorEnabled(enabled) => {
                 // Just send the request to update Tor setting
