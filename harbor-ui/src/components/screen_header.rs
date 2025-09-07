@@ -68,16 +68,15 @@ pub fn h_screen_header(
 
         let row = row![current_federation].spacing(16);
 
-        let shield_icon = map_icon(SvgIcon::Shield, 16., 16.);
-        let shield_alert_icon = map_icon(SvgIcon::ShieldAlert, 16., 16.);
-        let tor_enabled = harbor.tor_enabled;
-        let rich_tor = rich_text([
-            span("Tor ").size(16).color(gray()),
-            span("enabled").size(16).color(green()),
-        ])
-        .on_link_click(never);
-        let secured = if tor_enabled {
-            row![rich_tor, shield_icon]
+        let secured = if harbor.tor_enabled {
+            row![
+                rich_text([
+                    span("Tor ").size(16).color(gray()),
+                    span("enabled").size(16).color(green()),
+                ])
+                .on_link_click(never),
+                map_icon(SvgIcon::Shield, 16., 16.)
+            ]
         } else {
             row![
                 rich_text([
@@ -85,7 +84,7 @@ pub fn h_screen_header(
                     span("disabled").size(16).color(red()),
                 ])
                 .on_link_click(never),
-                shield_alert_icon
+                map_icon(SvgIcon::ShieldAlert, 16., 16.)
             ]
         }
         .align_y(Alignment::Center)
